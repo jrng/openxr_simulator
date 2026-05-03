@@ -1,12 +1,13 @@
 # OpenXR Simulator
 
-**OpenXR Simulator** is a runtime implementation for the OpenXR api, to run OpenXR games and applications
-without the need for a physical VR/AR headset.
+**OpenXR Simulator** is a runtime implementation for the OpenXR api,  
+to run OpenXR games and applications without the need for a physical VR/AR headset.
 
 <picture>
   <source srcset="screenshots/sinner_97.png 2x" />
   <img alt="Screenshot of Sinner 97 running against OpenXR Simulator" src="screenshots/sinner_97.png" />
 </picture>
+
 Game in screenshot: [Sinner 97](https://store.steampowered.com/app/2004370/Sinner_97/)
 
 ## Support
@@ -48,8 +49,8 @@ $ scripts\register.bat build\openxr_simulator.dll
 
 ## How to control
 
-**W A S D** - Head movement
-**Q E** - Head movement up and down
+**W A S D** - Head movement  
+**Q E** - Head movement up and down  
 **Mouse click and drag** - Look around
 
 ## References
