@@ -444,8 +444,6 @@ quaternion_from_orbit_and_pitch(float orbit, float pitch)
 #define ACTION_HANDLE_OFFSET     0x0000ABCD00A00000
 #define ACTION_SET_HANDLE_OFFSET 0x0000ABCD00A50000
 
-#define SPACE_HANDLE_OFFSET      0x0000ABCD00500000
-
 #define MAX_PATH_STRING_COUNT 128
 
 #include "config.h"
@@ -634,6 +632,14 @@ typedef struct
     bool active;
     uint16_t generation;
 
+    XrReferenceSpaceType reference_space_type;
+} Space;
+
+typedef struct
+{
+    bool active;
+    uint16_t generation;
+
     uint32_t next_image_index;
 
     union
@@ -686,8 +692,6 @@ typedef struct
     int32_t width;
     int32_t height;
 
-    uintptr_t next_space_handle;
-
     Texture font_texture;
 
     Platform platform;
@@ -711,7 +715,9 @@ typedef struct
     float head_pitch;
 
     XrVector3f head_position;
+    XrVector3f initial_head_position;
 
+    Space spaces[8];
     Swapchain swapchains[8];
 } Session;
 
@@ -1848,10 +1854,22 @@ xrCreateSession_impl(XrInstance instance, const XrSessionCreateInfo *create_info
         } break;
     }
 
-    state.session.next_space_handle = SPACE_HANDLE_OFFSET;
+    for (size_t i = 0; i < ArrayCount(state.session.swapchains); i += 1)
+    {
+        state.session.swapchains[i].active = false;
+        state.session.swapchains[i].generation = 1;
+    }
+
+    for (size_t i = 0; i < ArrayCount(state.session.spaces); i += 1)
+    {
+        state.session.spaces[i].active = false;
+        state.session.spaces[i].generation = 1;
+    }
+
     state.session.head_orbit = 0.0f;
     state.session.head_pitch = 0.0f;
-    state.session.head_position = (XrVector3f) { 0.0f, 1.75f, 0.0f };
+    state.session.initial_head_position = (XrVector3f) { 0.0f, 1.75f, 0.0f};
+    state.session.head_position = state.session.initial_head_position;
 
     change_state(XR_SESSION_STATE_IDLE);
     change_state(XR_SESSION_STATE_READY);
@@ -1870,6 +1888,9 @@ xrDestroySession_impl(XrSession session)
     {
         TRACE_LEAVE_RESULT(XR_ERROR_HANDLE_INVALID);
     }
+
+    // TODO: destroy open swapchains
+    // TODO: destroy spaces
 
     switch (state.instance.graphics_api)
     {
@@ -1994,8 +2015,28 @@ xrCreateReferenceSpace_impl(XrSession session, const XrReferenceSpaceCreateInfo 
         TRACE_LEAVE_RESULT(XR_ERROR_HANDLE_INVALID);
     }
 
-    *space = (XrSpace) state.session.next_space_handle;
-    state.session.next_space_handle += 1;
+    uint16_t space_id = 0;
+
+    for (uint16_t i = 0; i < ArrayCount(state.session.spaces); i += 1)
+    {
+        if (!state.session.spaces[i].active)
+        {
+            space_id = i + 1;
+            break;
+        }
+    }
+
+    if (space_id == 0)
+    {
+        TRACE_LEAVE_RESULT(XR_ERROR_LIMIT_REACHED);
+    }
+
+    Space *sp = state.session.spaces + (space_id - 1);
+
+    sp->active = true;
+    sp->reference_space_type = create_info->referenceSpaceType;
+
+    *space = (XrSpace) (uintptr_t) (((uintptr_t) space_id << 16) | (uintptr_t) sp->generation);
 
     TRACE_LEAVE_RESULT(XR_SUCCESS);
 }
@@ -2041,10 +2082,50 @@ xrCreateActionSpace_impl(XrSession session, const XrActionSpaceCreateInfo *creat
         TRACE_LEAVE_RESULT(XR_ERROR_HANDLE_INVALID);
     }
 
-    *space = (XrSpace) state.session.next_space_handle;
-    state.session.next_space_handle += 1;
+    uint16_t space_id = 0;
+
+    for (uint16_t i = 0; i < ArrayCount(state.session.spaces); i += 1)
+    {
+        if (!state.session.spaces[i].active)
+        {
+            space_id = i + 1;
+            break;
+        }
+    }
+
+    if (space_id == 0)
+    {
+        TRACE_LEAVE_RESULT(XR_ERROR_LIMIT_REACHED);
+    }
+
+    Space *sp = state.session.spaces + (space_id - 1);
+
+    sp->active = true;
+    // TODO: adapt for action space:
+    // sp->reference_space_type = create_info->referenceSpaceType;
+
+    *space = (XrSpace) (uintptr_t) (((uintptr_t) space_id << 16) | (uintptr_t) sp->generation);
 
     TRACE_LEAVE_RESULT(XR_SUCCESS);
+}
+
+static Space *
+get_space(XrSpace space)
+{
+    uint16_t space_id = (uint16_t) ((uintptr_t) space >> 16);
+    uint16_t generation = (uint16_t) (uintptr_t) space;
+
+    if ((space_id > 0) && (space_id <= ArrayCount(state.session.spaces)))
+    {
+        Space *sp = state.session.spaces + (space_id - 1);
+
+        if (sp->active && (sp->generation == generation))
+        {
+            return sp;
+        }
+    }
+
+    return NULL;
 }
 
 static XRAPI_ATTR XrResult XRAPI_CALL
@@ -2057,12 +2138,47 @@ xrLocateSpace_impl(XrSpace space, XrSpace base_space, XrTime time, XrSpaceLocati
         TRACE_LEAVE_RESULT(XR_ERROR_VALIDATION_FAILURE);
     }
 
-    XrQuaternionf orientation = { 0.0f, 0.0f, 0.0f, 1.0f };
-    XrVector3f position = { 0.0f, 0.0f, 0.0f };
+    Space *sp = get_space(space);
+    Space *base_sp = get_space(base_space);
 
-    location->locationFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
-    location->pose.orientation = orientation;
-    location->pose.position = position;
+    if (!sp | !base_sp)
+    {
+        TRACE_LEAVE_RESULT(XR_ERROR_HANDLE_INVALID);
+    }
+
+    XrQuaternionf identity_orientation = { 0.0f, 0.0f, 0.0f, 1.0f };
+    XrVector3f identity_position = { 0.0f, 0.0f, 0.0f };
+
+    location->locationFlags = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT |
+                              XR_SPACE_LOCATION_POSITION_VALID_BIT |
+                              XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT |
+                              XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
+
+    if (sp->reference_space_type == base_sp->reference_space_type)
+    {
+        location->pose.orientation = identity_orientation;
+        location->pose.position    = identity_position;
+    }
+    else if ((sp->reference_space_type == XR_REFERENCE_SPACE_TYPE_VIEW) &&
+             (base_sp->reference_space_type == XR_REFERENCE_SPACE_TYPE_STAGE))
+    {
+        location->pose.orientation = quaternion_from_orbit_and_pitch(state.session.head_orbit, state.session.head_pitch);
+        location->pose.position    = state.session.head_position;
+    }
+    else if ((sp->reference_space_type == XR_REFERENCE_SPACE_TYPE_LOCAL) &&
+             (base_sp->reference_space_type == XR_REFERENCE_SPACE_TYPE_STAGE))
+    {
+        location->pose.orientation = identity_orientation;
+        location->pose.position.x = state.session.head_position.x - state.session.initial_head_position.x;
+        location->pose.position.y = state.session.head_position.y - state.session.initial_head_position.y;
+        location->pose.position.z = state.session.head_position.z - state.session.initial_head_position.z;
+    }
+    else
+    {
+        msg("unhandled reference space type combination\n");
+        location->pose.orientation = identity_orientation;
+        location->pose.position = identity_position;
+    }
 
     TRACE_LEAVE_RESULT(XR_SUCCESS);
 }
@@ -2072,8 +2188,21 @@ xrDestroySpace_impl(XrSpace space)
 {
     TRACE_ENTER();
 
-    msg("TODO: implement %s\n", __func__);
-    // TODO: implement
+    Space *sp = get_space(space);
+
+    if (!sp)
+    {
+        TRACE_LEAVE_RESULT(XR_ERROR_HANDLE_INVALID);
+    }
+
+    if (sp->generation == 0xFFFF)
+    {
+        sp->generation = 0;
+    }
+
+    sp->generation += 1;
+    sp->active = false;
+
     TRACE_LEAVE_RESULT(XR_SUCCESS);
 }
 
@@ -3014,6 +3143,13 @@ xrLocateViews_impl(XrSession session, const XrViewLocateInfo *view_info, XrViewS
         TRACE_LEAVE_RESULT(XR_ERROR_HANDLE_INVALID);
     }
 
+    Space *sp = get_space(view_info->space);
+
+    if (!sp)
+    {
+        TRACE_LEAVE_RESULT(XR_ERROR_HANDLE_INVALID);
+    }
+
     *view_count = 2;
 
     if (view_state)
@@ -3036,19 +3172,30 @@ xrLocateViews_impl(XrSession session, const XrViewLocateInfo *view_info, XrViewS
             TRACE_LEAVE_RESULT(XR_ERROR_VALIDATION_FAILURE);
         }
 
-        float eye_distance_m = 0.062f;
-
         XrQuaternionf orientation = quaternion_from_orbit_and_pitch(state.session.head_orbit, state.session.head_pitch);
+        XrVector3f position = state.session.head_position;
+
+        if (sp->reference_space_type == XR_REFERENCE_SPACE_TYPE_VIEW)
+        {
+            orientation = (XrQuaternionf) { 0.0f, 0.0f, 0.0f, 1.0f };
+            position = (XrVector3f) { 0.0f, 0.0f, 0.0f };
+        }
+        else if (sp->reference_space_type == XR_REFERENCE_SPACE_TYPE_LOCAL)
+        {
+            position.x = state.session.head_position.x - state.session.initial_head_position.x;
+            position.y = state.session.head_position.y - state.session.initial_head_position.y;
+            position.z = state.session.head_position.z - state.session.initial_head_position.z;
+        }
 
         views[0].pose.orientation = orientation;
-        views[0].pose.position    = vec3_add(state.session.head_position, quaternion_apply(orientation, (XrVector3f) { -0.5f * EYE_DISTANCE_M, 0.0f, 0.0f }));
+        views[0].pose.position    = vec3_add(position, quaternion_apply(orientation, (XrVector3f) { -0.5f * EYE_DISTANCE_M, 0.0f, 0.0f }));
         views[0].fov.angleLeft    = -0.7f;
         views[0].fov.angleRight   =  0.7f;
         views[0].fov.angleUp      =  0.7f;
         views[0].fov.angleDown    = -0.7f;
 
         views[1].pose.orientation = orientation;
-        views[1].pose.position    = vec3_add(state.session.head_position, quaternion_apply(orientation, (XrVector3f) { 0.5f * EYE_DISTANCE_M, 0.0f, 0.0f }));
+        views[1].pose.position    = vec3_add(position, quaternion_apply(orientation, (XrVector3f) { 0.5f * EYE_DISTANCE_M, 0.0f, 0.0f }));
         views[1].fov.angleLeft    = -0.7f;
         views[1].fov.angleRight   =  0.7f;
         views[1].fov.angleUp      =  0.7f;
