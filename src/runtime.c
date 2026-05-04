@@ -448,9 +448,7 @@ quaternion_from_orbit_and_pitch(float orbit, float pitch)
 
 #define MAX_PATH_STRING_COUNT 128
 
-static const int32_t EYE_WIDTH  = 960;
-static const int32_t EYE_HEIGHT = 960;
-static const int32_t TARGET_FRAME_RATE = 90;
+#include "config.h"
 
 typedef enum
 {
@@ -1764,8 +1762,8 @@ xrCreateSession_impl(XrInstance instance, const XrSessionCreateInfo *create_info
     int32_t px6 = 6;
     int32_t px8 = 8;
 
-    int32_t window_width  = (2 * EYE_WIDTH) + (2 * px8);
-    int32_t window_height = EYE_HEIGHT + px8 + px6 + px4 + terminus_16_bold_font.size;
+    int32_t window_width  = (2 * EYE_WIDTH_PX) + (2 * px8);
+    int32_t window_height = EYE_HEIGHT_PX + px8 + px6 + px4 + terminus_16_bold_font.size;
 
     switch (state.instance.graphics_api)
     {
@@ -2190,16 +2188,16 @@ xrEnumerateViewConfigurationViews_impl(XrInstance instance, XrSystemId system_id
             TRACE_LEAVE_RESULT(XR_ERROR_VALIDATION_FAILURE);
         }
 
-        views[0].recommendedImageRectWidth       = EYE_WIDTH;
+        views[0].recommendedImageRectWidth       = EYE_WIDTH_PX;
         views[0].maxImageRectWidth               = 4096;
-        views[0].recommendedImageRectHeight      = EYE_HEIGHT;
+        views[0].recommendedImageRectHeight      = EYE_HEIGHT_PX;
         views[0].maxImageRectHeight              = 4096;
         views[0].recommendedSwapchainSampleCount = 1;
         views[0].maxSwapchainSampleCount         = 1;
 
-        views[1].recommendedImageRectWidth       = EYE_WIDTH;
+        views[1].recommendedImageRectWidth       = EYE_WIDTH_PX;
         views[1].maxImageRectWidth               = 4096;
-        views[1].recommendedImageRectHeight      = EYE_HEIGHT;
+        views[1].recommendedImageRectHeight      = EYE_HEIGHT_PX;
         views[1].maxImageRectHeight              = 4096;
         views[1].recommendedSwapchainSampleCount = 1;
         views[1].maxSwapchainSampleCount         = 1;
@@ -2935,9 +2933,9 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
         ctx.y_scale = -2.0f / height;
 
         set_texture(&ctx, left_texture);
-        push_quad(&ctx, eye_x, eye_y, eye_x + (float) EYE_WIDTH, eye_y + (float) EYE_HEIGHT, 0.0f, y0, 1.0f, y1, 0xFFFFFFFF);
+        push_quad(&ctx, eye_x, eye_y, eye_x + (float) EYE_WIDTH_PX, eye_y + (float) EYE_HEIGHT_PX, 0.0f, y0, 1.0f, y1, 0xFFFFFFFF);
         set_texture(&ctx, right_texture);
-        push_quad(&ctx, eye_x + (float) EYE_WIDTH, eye_y, eye_x + (float) (2 * EYE_WIDTH), eye_y + (float) EYE_HEIGHT, 0.0f, y0, 1.0f, y1, 0xFFFFFFFF);
+        push_quad(&ctx, eye_x + (float) EYE_WIDTH_PX, eye_y, eye_x + (float) (2 * EYE_WIDTH_PX), eye_y + (float) EYE_HEIGHT_PX, 0.0f, y0, 1.0f, y1, 0xFFFFFFFF);
 
         set_texture(&ctx, state.session.font_texture);
         draw_string(&ctx, &terminus_16_bold_font, px8 + px4, px6 + terminus_16_bold_font.ascent, graphics_api_name, graphics_api_color);
@@ -3043,14 +3041,14 @@ xrLocateViews_impl(XrSession session, const XrViewLocateInfo *view_info, XrViewS
         XrQuaternionf orientation = quaternion_from_orbit_and_pitch(state.session.head_orbit, state.session.head_pitch);
 
         views[0].pose.orientation = orientation;
-        views[0].pose.position    = vec3_add(state.session.head_position, quaternion_apply(orientation, (XrVector3f) { -0.5f * eye_distance_m, 0.0f, 0.0f }));
+        views[0].pose.position    = vec3_add(state.session.head_position, quaternion_apply(orientation, (XrVector3f) { -0.5f * EYE_DISTANCE_M, 0.0f, 0.0f }));
         views[0].fov.angleLeft    = -0.7f;
         views[0].fov.angleRight   =  0.7f;
         views[0].fov.angleUp      =  0.7f;
         views[0].fov.angleDown    = -0.7f;
 
         views[1].pose.orientation = orientation;
-        views[1].pose.position    = vec3_add(state.session.head_position, quaternion_apply(orientation, (XrVector3f) { 0.5f * eye_distance_m, 0.0f, 0.0f }));
+        views[1].pose.position    = vec3_add(state.session.head_position, quaternion_apply(orientation, (XrVector3f) { 0.5f * EYE_DISTANCE_M, 0.0f, 0.0f }));
         views[1].fov.angleLeft    = -0.7f;
         views[1].fov.angleRight   =  0.7f;
         views[1].fov.angleUp      =  0.7f;
