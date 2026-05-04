@@ -3,6 +3,14 @@
 
 C_MAKE_INFO(commands_info, configs_info)
 {
+    add_info(configs_info, StringLiteral("trace_openxr_calls"),   StringLiteral("Log all openxr api calls (on|off)."));
+    add_info(configs_info, StringLiteral("platform_win32"),       StringLiteral("Win32 platform support (on|off)."));
+    add_info(configs_info, StringLiteral("platform_xlib"),        StringLiteral("Linux x11 platform support (on|off)."));
+    add_info(configs_info, StringLiteral("platform_wayland"),     StringLiteral("Linux wayland platform support (on|off)."));
+    add_info(configs_info, StringLiteral("graphics_api_d3d11"),   StringLiteral("Direct3D 11 support (on|off). [default: on (windows), off]"));
+    add_info(configs_info, StringLiteral("graphics_api_opengl"),  StringLiteral("OpenGL 3.0+ support (on|off). [default: on]"));
+    add_info(configs_info, StringLiteral("openxr_sdk_root_path"), StringLiteral("Path to the openxr sdk. [default: <unset>]"));
+
     add_default_info(commands_info, configs_info);
 }
 
