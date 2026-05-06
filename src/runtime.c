@@ -315,6 +315,7 @@ xr_result_to_string(XrResult value, char buffer[XR_MAX_RESULT_STRING_SIZE])
 
 static char trace_result_buffer[XR_MAX_RESULT_STRING_SIZE];
 
+#  define TRACE_MSG(format, ...) msg(format, __VA_ARGS__)
 #  define TRACE_ENTER() msg("enter %s\n", __func__)
 #  define TRACE_LEAVE_RESULT(result)                            \
     do {                                                        \
@@ -324,6 +325,7 @@ static char trace_result_buffer[XR_MAX_RESULT_STRING_SIZE];
     } while (0)
 
 #else
+#  define TRACE_MSG(format, ...)
 #  define TRACE_ENTER()
 #  define TRACE_LEAVE_RESULT(result) return result
 #endif
@@ -370,6 +372,17 @@ strings_are_equal(String a, String b)
 
     return true;
 }
+
+typedef struct Path Path;
+
+struct Path
+{
+    uint64_t magic;
+    Path *next;
+    String path;
+};
+
+static const uint64_t PATH_MAGIC_VALUE = 0xEEFFC000;
 
 static inline XrVector3f
 vec3_add(XrVector3f a, XrVector3f b)
@@ -679,8 +692,10 @@ typedef struct
 
     XrEventDataBuffer event_queue[4];
 
-    // TODO: actually store these
-    // String path_strings[MAX_PATH_STRING_COUNT];
+    Path *first_path;
+
+    uint32_t path_memory_occupied;
+    uint8_t path_memory[16 * 1024];
 } Instance;
 
 typedef struct
@@ -818,8 +833,7 @@ xrCreateInstance_impl(const XrInstanceCreateInfo *create_info, XrInstance *insta
     }
 
     if ((create_info->type != XR_TYPE_INSTANCE_CREATE_INFO) ||
-        create_info->next ||
-        (create_info->createFlags != 0))
+        create_info->next || (create_info->createFlags != 0))
     {
         TRACE_LEAVE_RESULT(XR_ERROR_VALIDATION_FAILURE);
     }
@@ -905,6 +919,8 @@ xrCreateInstance_impl(const XrInstanceCreateInfo *create_info, XrInstance *insta
     state.instance.graphics_api = GraphicsApiUnknown;
     state.instance.next_action_handle = ACTION_HANDLE_OFFSET;
     state.instance.next_action_set_handle = ACTION_SET_HANDLE_OFFSET;
+    state.instance.first_path = NULL;
+    state.instance.path_memory_occupied = 0;
 
     *instance = INSTANCE_HANDLE;
 
@@ -3209,35 +3225,106 @@ static XRAPI_ATTR XrResult XRAPI_CALL
 xrStringToPath_impl(XrInstance instance, const char *str, XrPath *path)
 {
     TRACE_ENTER();
+    TRACE_MSG("  str <- %s\n", str);
 
     if ((instance != INSTANCE_HANDLE) || !state.instance.active)
     {
         TRACE_LEAVE_RESULT(XR_ERROR_HANDLE_INVALID);
     }
 
-    // djb2 hash
-    uint64_t hash = 5381;
-    String path_str = C(str);
-
-    for (uint64_t i = 0; i < path_str.count; i += 1)
+    if (!path)
     {
-        hash = ((hash << 5) + hash) + path_str.data[i];
+        TRACE_LEAVE_RESULT(XR_ERROR_VALIDATION_FAILURE);
     }
 
-    // TODO: store in hash map
-    uint32_t index = (uint32_t) (hash % MAX_PATH_STRING_COUNT);
-    *path = (XrPath) index;
+    String path_str = C(str);
+
+    // TODO: check if str is a well-formed path
+
+    Path *p = state.instance.first_path;
+
+    while (p)
+    {
+        if (p->magic != PATH_MAGIC_VALUE)
+        {
+            TRACE_LEAVE_RESULT(XR_ERROR_RUNTIME_FAILURE);
+        }
+
+        if (strings_are_equal(p->path, path_str))
+        {
+            *path = (XrPath) ((uint8_t *) (p + 1) - state.instance.path_memory);
+            TRACE_MSG("  path -> %lu\n", *path);
+            TRACE_LEAVE_RESULT(XR_SUCCESS);
+        }
+
+        p = p->next;
+    }
+
+    uint32_t allocation_size = (uint32_t) sizeof(*p) + (((uint32_t) path_str.count + 7) & ~7);
+
+    if ((state.instance.path_memory_occupied + allocation_size) > ArrayCount(state.instance.path_memory))
+    {
+        TRACE_LEAVE_RESULT(XR_ERROR_PATH_COUNT_EXCEEDED);
+    }
+
+    p = (Path *) (state.instance.path_memory + state.instance.path_memory_occupied);
+    state.instance.path_memory_occupied += allocation_size;
+
+    p->magic      = PATH_MAGIC_VALUE;
+    p->next       = state.instance.first_path;
+    p->path.count = path_str.count;
+    p->path.data  = (uint8_t *) (p + 1);
+
+    memcpy(p->path.data, path_str.data, path_str.count);
+
+    state.instance.first_path = p;
+
+    *path = (XrPath) (p->path.data - state.instance.path_memory);
+    TRACE_MSG("  path -> %lu\n", *path);
 
     TRACE_LEAVE_RESULT(XR_SUCCESS);
 }
 
 static XRAPI_ATTR XrResult XRAPI_CALL
-xrPathToString_impl(XrInstance instance, XrPath path, uint32_t bufferCapacityInput, uint32_t* bufferCountOutput, char* buffer)
+xrPathToString_impl(XrInstance instance, XrPath path, uint32_t buffer_capacity_input, uint32_t *buffer_count_output, char *buffer)
 {
     TRACE_ENTER();
 
-    msg("TODO: implement %s\n", __func__);
-    // TODO: implement
+    if ((instance != INSTANCE_HANDLE) || !state.instance.active)
+    {
+        TRACE_LEAVE_RESULT(XR_ERROR_HANDLE_INVALID);
+    }
+
+    if (path == XR_NULL_PATH)
+    {
+        TRACE_LEAVE_RESULT(XR_ERROR_PATH_INVALID);
+    }
+
+    Path *p = (Path *) (state.instance.path_memory + path) - 1;
+
+    if (p->magic != PATH_MAGIC_VALUE)
+    {
+        TRACE_LEAVE_RESULT(XR_ERROR_PATH_INVALID);
+    }
+
+    *buffer_count_output = p->path.count + 1;
+
+    if (buffer_capacity_input > 0)
+    {
+        if (buffer_capacity_input < (p->path.count + 1))
+        {
+            TRACE_LEAVE_RESULT(XR_ERROR_SIZE_INSUFFICIENT);
+        }
+
+        if (!buffer)
+        {
+            TRACE_LEAVE_RESULT(XR_ERROR_VALIDATION_FAILURE);
+        }
+
+        memcpy(buffer, p->path.data, p->path.count);
+        buffer[p->path.count] = 0;
+    }
+
     TRACE_LEAVE_RESULT(XR_SUCCESS);
 }
 
