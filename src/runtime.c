@@ -3295,7 +3295,7 @@ xrPathToString_impl(XrInstance instance, XrPath path, uint32_t buffer_capacity_i
         TRACE_LEAVE_RESULT(XR_ERROR_HANDLE_INVALID);
     }
 
-    if (path == XR_NULL_PATH)
+    if ((path == XR_NULL_PATH) || (path >= state.instance.path_memory_occupied))
     {
         TRACE_LEAVE_RESULT(XR_ERROR_PATH_INVALID);
     }
