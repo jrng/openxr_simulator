@@ -1,3 +1,5 @@
+static LARGE_INTEGER win32_performance_frequency;
+
 static XRAPI_ATTR XrResult XRAPI_CALL
 xrConvertWin32PerformanceCounterToTimeKHR_impl(XrInstance instance, const LARGE_INTEGER *performance_counter, XrTime *time)
 {
@@ -733,16 +735,14 @@ deinitialize_platform_win32_d3d11(PlatformWin32State *platform_win32)
 static void
 platform_win32_wait_frame(PlatformWin32State *platform_win32, Session *session)
 {
-    LARGE_INTEGER freq;
-    QueryPerformanceFrequency(&freq);
-
     LARGE_INTEGER time;
     int64_t dt_us;
 
     for (;;)
     {
         QueryPerformanceCounter(&time);
-        dt_us = (1000000 * (time.QuadPart - platform_win32->last_time.QuadPart)) / freq.QuadPart;
+        dt_us = (1000000 * (time.QuadPart - platform_win32->last_time.QuadPart)) /
+                win32_performance_frequency.QuadPart;
 
         if (dt_us >= (1000000 / TARGET_FRAME_RATE))
         {
@@ -750,7 +750,8 @@ platform_win32_wait_frame(PlatformWin32State *platform_win32, Session *session)
         }
     }
 
-    float dt = (float) (time.QuadPart - platform_win32->last_time.QuadPart) / (float) freq.QuadPart;
+    float dt = (float) (time.QuadPart - platform_win32->last_time.QuadPart) /
+               (float) win32_performance_frequency.QuadPart;
 
     platform_win32->last_time = time;
 

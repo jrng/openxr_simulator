@@ -30,6 +30,12 @@
 
 #endif
 
+#if PLATFORM_XLIB || PLATFORM_WAYLAND
+
+#  include <time.h>
+
+#endif
+
 #if PLATFORM_XLIB
 
 #define Font __Font
@@ -598,6 +604,37 @@ push_quad(DrawContext *ctx, float x0, float y0, float x1, float y1, float u0, fl
     vertices[5].color = color;
 }
 
+static float
+get_string_width(Font *font, const char *str)
+{
+    float result = 0.0f;
+
+    while (*str)
+    {
+        uint32_t codepoint = *str++;
+
+        Glyph *glyph = NULL;
+
+        for (uint32_t i = 0; i < font->glyph_count; i += 1)
+        {
+            Glyph *g = font->glyphs + i;
+
+            if (g->codepoint == codepoint)
+            {
+                glyph = g;
+                break;
+            }
+        }
+
+        if (glyph)
+        {
+            result += (float) glyph->x_advance;
+        }
+    }
+
+    return result;
+}
+
 static void
 draw_string(DrawContext *ctx, Font *font, float x, float y, const char *str, uint32_t color)
 {
@@ -726,6 +763,10 @@ typedef struct
 #endif
     };
 
+    float fps;
+    uint32_t frame_count;
+    uint64_t fps_start_us;
+
     float head_orbit;
     float head_pitch;
 
@@ -764,6 +805,21 @@ static RuntimeState state;
 #if PLATFORM_WIN32
 #  include "platform_win32.c"
 #endif
+
+static inline uint64_t
+get_current_us(void)
+{
+#if PLATFORM_XLIB || PLATFORM_WAYLAND
+    struct timespec time;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &time);
+    return time.tv_sec * 1000000ULL + time.tv_nsec / 1000ULL;
+#elif PLATFORM_WIN32
+    LARGE_INTEGER time;
+    QueryPerformanceCounter(&time);
+
+    return (1000000ULL * time.QuadPart) / win32_performance_frequency.QuadPart;
+#endif
+}
 
 static XRAPI_ATTR XrResult XRAPI_CALL
 xrEnumerateInstanceExtensionProperties_impl(const char *layer_name, uint32_t property_capacity, uint32_t *property_count, XrExtensionProperties *properties)
@@ -1881,6 +1937,9 @@ xrCreateSession_impl(XrInstance instance, const XrSessionCreateInfo *create_info
         state.session.spaces[i].active = false;
         state.session.spaces[i].generation = 1;
     }
+
+    state.session.frame_count = 0;
+    state.session.fps_start_us = get_current_us();
 
     state.session.head_orbit = 0.0f;
     state.session.head_pitch = 0.0f;
@@ -3085,6 +3144,12 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
         set_texture(&ctx, state.session.font_texture);
         draw_string(&ctx, &terminus_16_bold_font, px8 + px4, px6 + terminus_16_bold_font.ascent, graphics_api_name, graphics_api_color);
 
+        char buffer[32];
+        snprintf(buffer, sizeof(buffer), "%.2f fps", state.session.fps);
+
+        float w = get_string_width(&terminus_16_bold_font, buffer);
+        draw_string(&ctx, &terminus_16_bold_font, width - (px8 + px4 + w), px6 + terminus_16_bold_font.ascent, buffer, graphics_api_color);
+
         switch (state.instance.graphics_api)
         {
 
@@ -3139,6 +3204,18 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
                 // TODO: return error
             } break;
         }
+    }
+
+    state.session.frame_count += 1;
+
+    uint64_t current_us = get_current_us();
+    uint64_t delta = current_us - state.session.fps_start_us;
+
+    if (delta > 500000)
+    {
+        state.session.fps = (float) (1000000 * state.session.frame_count) / (float) delta;
+        state.session.frame_count = 0;
+        state.session.fps_start_us = current_us;
     }
 
     TRACE_LEAVE_RESULT(XR_SUCCESS);
@@ -3724,6 +3801,8 @@ xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo *loader_info, XrNe
         state.supported_extension_count = 0;
 
 #if PLATFORM_WIN32
+        QueryPerformanceFrequency(&win32_performance_frequency);
+
         if (state.supported_extension_count < ArrayCount(state.supported_extensions))
         {
             Extension *extension = state.supported_extensions + state.supported_extension_count++;
