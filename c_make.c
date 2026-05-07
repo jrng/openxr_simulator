@@ -64,8 +64,17 @@ C_MAKE_ENTRY(command, argument_count, arguments)
         }
         else
         {
-            // command_append(&cmd, "-std=c99", "-Wall", "-Wextra", "-pedantic");
-            command_append(&cmd, "-std=c99");
+            // command_append(&cmd, "-Wall", "-Wextra", "-pedantic");
+
+            if (get_target_platform() == PlatformLinux)
+            {
+                command_append(&cmd, "-std=gnu99");
+            }
+            else
+            {
+                command_append(&cmd, "-std=c99");
+            }
+
             command_append(&cmd, "-fPIC", "-shared");
         }
 

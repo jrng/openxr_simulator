@@ -1,5 +1,3 @@
-static LARGE_INTEGER win32_performance_frequency;
-
 static XRAPI_ATTR XrResult XRAPI_CALL
 xrConvertWin32PerformanceCounterToTimeKHR_impl(XrInstance instance, const LARGE_INTEGER *performance_counter, XrTime *time)
 {

@@ -22,15 +22,37 @@
 #  define GRAPHICS_API_OPENGL 0
 #endif
 
+#define OS_WINDOWS 0
+#define OS_LINUX   0
+#define OS_MACOS   0
+
+#define OS_UNIX    0
+
 #if defined(_WIN32)
+#  undef OS_WINDOWS
+#  define OS_WINDOWS 1
+#elif defined(__linux__)
+#  undef OS_LINUX
+#  define OS_LINUX 1
+#elif defined(__APPLE__) && defined(__MACH__)
+#  undef OS_MACOS
+#  define OS_MACOS 1
+#endif
+
+#if OS_LINUX || OS_MACOS
+#  undef OS_UNIX
+#  define OS_UNIX 1
+#endif
+
+#if OS_WINDOWS
 
 #  pragma comment(linker, "/export:xrNegotiateLoaderRuntimeInterface")
 
 #  include <windows.h>
 
-#endif
+static LARGE_INTEGER win32_performance_frequency;
 
-#if PLATFORM_XLIB || PLATFORM_WAYLAND
+#elif OS_UNIX
 
 #  include <time.h>
 
@@ -809,15 +831,14 @@ static RuntimeState state;
 static inline uint64_t
 get_current_us(void)
 {
-#if PLATFORM_XLIB || PLATFORM_WAYLAND
+#if OS_WINDOWS
+    LARGE_INTEGER time;
+    QueryPerformanceCounter(&time);
+    return (1000000ULL * time.QuadPart) / win32_performance_frequency.QuadPart;
+#elif OS_UNIX
     struct timespec time;
     clock_gettime(CLOCK_MONOTONIC_RAW, &time);
     return time.tv_sec * 1000000ULL + time.tv_nsec / 1000ULL;
-#elif PLATFORM_WIN32
-    LARGE_INTEGER time;
-    QueryPerformanceCounter(&time);
-
-    return (1000000ULL * time.QuadPart) / win32_performance_frequency.QuadPart;
 #endif
 }
 
