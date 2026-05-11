@@ -233,7 +233,7 @@ deinitialize_platform_xlib_opengl(PlatformXlibState *platform_xlib)
 #endif
 
 static void
-platform_xlib_wait_frame(PlatformXlibState *platform_xlib, Session *session)
+platform_xlib_wait_frame(PlatformXlibState *platform_xlib, PlatformInput *input)
 {
     while (XPending(platform_xlib->display))
     {
@@ -255,16 +255,16 @@ platform_xlib_wait_frame(PlatformXlibState *platform_xlib, Session *session)
 
             case EnterNotify:
             {
-                platform_xlib->mouse_x = ev.xmotion.x;
-                platform_xlib->mouse_y = ev.xmotion.y;
-                platform_xlib->last_mouse_x = platform_xlib->mouse_x;
-                platform_xlib->last_mouse_y = platform_xlib->mouse_y;
+                input->mouse.x = ev.xmotion.x;
+                input->mouse.y = ev.xmotion.y;
+                input->last_mouse.x = input->mouse.x;
+                input->last_mouse.y = input->mouse.y;
             } break;
 
             case MotionNotify:
             {
-                platform_xlib->mouse_x = ev.xmotion.x;
-                platform_xlib->mouse_y = ev.xmotion.y;
+                input->mouse.x = ev.xmotion.x;
+                input->mouse.y = ev.xmotion.y;
             } break;
 
             case ButtonPress:
@@ -276,7 +276,14 @@ platform_xlib_wait_frame(PlatformXlibState *platform_xlib, Session *session)
                 {
                     case Button1:
                     {
-                        platform_xlib->mouse_left_down = is_down;
+                        input->mouse_left.change_count += (input->mouse_left.is_down != is_down) ? 1 : 0;
+                        input->mouse_left.is_down = is_down;
+                    } break;
+
+                    case Button3:
+                    {
+                        input->mouse_right.change_count += (input->mouse_right.is_down != is_down) ? 1 : 0;
+                        input->mouse_right.is_down = is_down;
                     } break;
                 }
             } break;
@@ -305,88 +312,46 @@ platform_xlib_wait_frame(PlatformXlibState *platform_xlib, Session *session)
                 {
                     case XK_a:
                     {
-                        platform_xlib->left_down = is_down;
+                        input->left.change_count += (input->left.is_down != is_down) ? 1 : 0;
+                        input->left.is_down = is_down;
                     } break;
 
                     case XK_d:
                     {
-                        platform_xlib->right_down = is_down;
+                        input->right.change_count += (input->right.is_down != is_down) ? 1 : 0;
+                        input->right.is_down = is_down;
                     } break;
 
                     case XK_e:
                     {
-                        platform_xlib->up_down = is_down;
+                        input->up.change_count += (input->up.is_down != is_down) ? 1 : 0;
+                        input->up.is_down = is_down;
                     } break;
 
                     case XK_s:
                     {
-                        platform_xlib->back_down = is_down;
+                        input->back.change_count += (input->back.is_down != is_down) ? 1 : 0;
+                        input->back.is_down = is_down;
                     } break;
 
                     case XK_q:
                     {
-                        platform_xlib->down_down = is_down;
+                        input->down.change_count += (input->down.is_down != is_down) ? 1 : 0;
+                        input->down.is_down = is_down;
                     } break;
 
                     case XK_w:
                     {
-                        platform_xlib->forward_down = is_down;
+                        input->forward.change_count += (input->forward.is_down != is_down) ? 1 : 0;
+                        input->forward.is_down = is_down;
                     } break;
                 }
             } break;
         }
     }
 
-    int32_t mouse_dx = platform_xlib->mouse_x - platform_xlib->last_mouse_x;
-    int32_t mouse_dy = platform_xlib->mouse_y - platform_xlib->last_mouse_y;
-
-    platform_xlib->last_mouse_x = platform_xlib->mouse_x;
-    platform_xlib->last_mouse_y = platform_xlib->mouse_y;
-
-    XrQuaternionf orientation = quaternion_from_orbit_and_pitch(state.session.head_orbit, state.session.head_pitch);
-
-    if (platform_xlib->mouse_left_down)
-    {
-        session->head_orbit -= 0.0032f * mouse_dx;
-        session->head_pitch -= 0.0032f * mouse_dy;
-    }
-
-    XrVector3f direction = { 0.0f, 0.0f, 0.0f };
-    XrVector3f forward = quaternion_apply(orientation, (XrVector3f) { 0.0f, 0.0f, -1.0f });
-    XrVector3f right   = quaternion_apply(orientation, (XrVector3f) { 1.0f, 0.0f, 0.0f });
-
-    if (platform_xlib->left_down)
-    {
-        direction = vec3_add(direction, vec3_scale(-1.0f, right));
-    }
-
-    if (platform_xlib->right_down)
-    {
-        direction = vec3_add(direction, right);
-    }
-
-    if (platform_xlib->forward_down)
-    {
-        direction = vec3_add(direction, forward);
-    }
-
-    if (platform_xlib->back_down)
-    {
-        direction = vec3_add(direction, vec3_scale(-1.0f, forward));
-    }
-
-    if (platform_xlib->up_down)
-    {
-        direction = vec3_add(direction, (XrVector3f) { 0.0f, 1.0f, 0.0f });
-    }
-
-    if (platform_xlib->down_down)
-    {
-        direction = vec3_add(direction, (XrVector3f) { 0.0f, -1.0f, 0.0f });
-    }
-
     // TODO: delta time
-    session->head_position = vec3_add(session->head_position, vec3_scale(1.0f / 60.0f, direction));
+    input->dt = 1.0f / (float) TARGET_FRAME_RATE;
 }
 
 #if GRAPHICS_API_OPENGL

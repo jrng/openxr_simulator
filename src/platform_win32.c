@@ -47,6 +47,7 @@ xrConvertTimeToWin32PerformanceCounterKHR_impl(XrInstance instance, XrTime time,
 LRESULT CALLBACK
 window_callback(HWND window_handle, UINT message, WPARAM w_param, LPARAM l_param)
 {
+    PlatformInput *input = NULL;
     PlatformWin32State *platform_win32 = NULL;
 
     if (message == WM_NCCREATE)
@@ -60,28 +61,51 @@ window_callback(HWND window_handle, UINT message, WPARAM w_param, LPARAM l_param
         platform_win32 = (PlatformWin32State *) GetWindowLongPtr(window_handle, GWLP_USERDATA);
     }
 
+    if (platform_win32)
+    {
+        input = platform_win32->input;
+    }
+
     LRESULT result = FALSE;
 
     switch (message)
     {
         case WM_MOUSEMOVE:
         {
-            platform_win32->mouse_x = (int16_t)( l_param        & 0xFFFF);
-            platform_win32->mouse_y = (int16_t)((l_param >> 16) & 0xFFFF);
+            input->mouse.x = (int16_t)( l_param        & 0xFFFF);
+            input->mouse.y = (int16_t)((l_param >> 16) & 0xFFFF);
         } break;
 
         case WM_LBUTTONDOWN:
         {
-            platform_win32->mouse_x = (int16_t)( l_param        & 0xFFFF);
-            platform_win32->mouse_y = (int16_t)((l_param >> 16) & 0xFFFF);
-            platform_win32->mouse_left_down = true;
+            input->mouse.x = (int16_t)( l_param        & 0xFFFF);
+            input->mouse.y = (int16_t)((l_param >> 16) & 0xFFFF);
+            input->mouse_left.change_count += !input->mouse_left.is_down ? 1 : 0;
+            input->mouse_left.is_down = true;
         } break;
 
         case WM_LBUTTONUP:
         {
-            platform_win32->mouse_x = (int16_t)( l_param        & 0xFFFF);
-            platform_win32->mouse_y = (int16_t)((l_param >> 16) & 0xFFFF);
-            platform_win32->mouse_left_down = false;
+            input->mouse.x = (int16_t)( l_param        & 0xFFFF);
+            input->mouse.y = (int16_t)((l_param >> 16) & 0xFFFF);
+            input->mouse_left.change_count += input->mouse_left.is_down ? 1 : 0;
+            input->mouse_left.is_down = false;
+        } break;
+
+        case WM_RBUTTONDOWN:
+        {
+            input->mouse.x = (int16_t)( l_param        & 0xFFFF);
+            input->mouse.y = (int16_t)((l_param >> 16) & 0xFFFF);
+            input->mouse_right.change_count += !input->mouse_right.is_down ? 1 : 0;
+            input->mouse_right.is_down = true;
+        } break;
+
+        case WM_RBUTTONUP:
+        {
+            input->mouse.x = (int16_t)( l_param        & 0xFFFF);
+            input->mouse.y = (int16_t)((l_param >> 16) & 0xFFFF);
+            input->mouse_right.change_count += input->mouse_right.is_down ? 1 : 0;
+            input->mouse_right.is_down = false;
         } break;
 
         case WM_KEYDOWN:
@@ -96,32 +120,38 @@ window_callback(HWND window_handle, UINT message, WPARAM w_param, LPARAM l_param
                 {
                     case 'A':
                     {
-                        platform_win32->left_down = is_down;
+                        input->left.change_count += 1;
+                        input->left.is_down = is_down;
                     } break;
 
                     case 'D':
                     {
-                        platform_win32->right_down = is_down;
+                        input->right.change_count += 1;
+                        input->right.is_down = is_down;
                     } break;
 
                     case 'E':
                     {
-                        platform_win32->up_down = is_down;
+                        input->up.change_count += 1;
+                        input->up.is_down = is_down;
                     } break;
 
                     case 'S':
                     {
-                        platform_win32->back_down = is_down;
+                        input->back.change_count += 1;
+                        input->back.is_down = is_down;
                     } break;
 
                     case 'Q':
                     {
-                        platform_win32->down_down = is_down;
+                        input->down.change_count += 1;
+                        input->down.is_down = is_down;
                     } break;
 
                     case 'W':
                     {
-                        platform_win32->forward_down = is_down;
+                        input->forward.change_count += 1;
+                        input->forward.is_down = is_down;
                     } break;
                 }
             }
@@ -731,7 +761,7 @@ deinitialize_platform_win32_d3d11(PlatformWin32State *platform_win32)
 #endif
 
 static void
-platform_win32_wait_frame(PlatformWin32State *platform_win32, Session *session)
+platform_win32_wait_frame(PlatformWin32State *platform_win32, PlatformInput *input)
 {
     LARGE_INTEGER time;
     int64_t dt_us;
@@ -748,10 +778,11 @@ platform_win32_wait_frame(PlatformWin32State *platform_win32, Session *session)
         }
     }
 
-    float dt = (float) (time.QuadPart - platform_win32->last_time.QuadPart) /
-               (float) win32_performance_frequency.QuadPart;
+    input->dt = (float) (time.QuadPart - platform_win32->last_time.QuadPart) /
+                (float) win32_performance_frequency.QuadPart;
 
     platform_win32->last_time = time;
+    platform_win32->input = input;
 
     MSG message;
 
@@ -761,55 +792,7 @@ platform_win32_wait_frame(PlatformWin32State *platform_win32, Session *session)
         DispatchMessage(&message);
     }
 
-    int32_t mouse_dx = platform_win32->mouse_x - platform_win32->last_mouse_x;
-    int32_t mouse_dy = platform_win32->mouse_y - platform_win32->last_mouse_y;
-
-    platform_win32->last_mouse_x = platform_win32->mouse_x;
-    platform_win32->last_mouse_y = platform_win32->mouse_y;
-
-    XrQuaternionf orientation = quaternion_from_orbit_and_pitch(session->head_orbit, session->head_pitch);
-
-    if (platform_win32->mouse_left_down)
-    {
-        session->head_orbit -= 0.0032f * mouse_dx;
-        session->head_pitch -= 0.0032f * mouse_dy;
-    }
-
-    XrVector3f direction = { 0.0f, 0.0f, 0.0f };
-    XrVector3f forward = quaternion_apply(orientation, (XrVector3f) { 0.0f, 0.0f, -1.0f });
-    XrVector3f right   = quaternion_apply(orientation, (XrVector3f) { 1.0f, 0.0f, 0.0f });
-
-    if (platform_win32->left_down)
-    {
-        direction = vec3_add(direction, vec3_scale(-1.0f, right));
-    }
-
-    if (platform_win32->right_down)
-    {
-        direction = vec3_add(direction, right);
-    }
-
-    if (platform_win32->forward_down)
-    {
-        direction = vec3_add(direction, forward);
-    }
-
-    if (platform_win32->back_down)
-    {
-        direction = vec3_add(direction, vec3_scale(-1.0f, forward));
-    }
-
-    if (platform_win32->up_down)
-    {
-        direction = vec3_add(direction, (XrVector3f) { 0.0f, 1.0f, 0.0f });
-    }
-
-    if (platform_win32->down_down)
-    {
-        direction = vec3_add(direction, (XrVector3f) { 0.0f, -1.0f, 0.0f });
-    }
-
-    session->head_position = vec3_add(session->head_position, vec3_scale(dt, direction));
+    platform_win32->input = NULL;
 }
 
 #if GRAPHICS_API_D3D11

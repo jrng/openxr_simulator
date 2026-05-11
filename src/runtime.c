@@ -362,6 +362,24 @@ static char trace_result_buffer[XR_MAX_RESULT_STRING_SIZE];
 
 typedef struct
 {
+    int32_t x, y;
+} I32Point;
+
+typedef struct
+{
+    I32Point min;
+    I32Point max;
+} I32Rect;
+
+static inline bool
+rect_contains_point(I32Rect rect, I32Point point)
+{
+    return (point.x >= rect.min.x) && (point.y >= rect.min.y) &&
+           (point.x < rect.max.x) && (point.y < rect.max.y);
+}
+
+typedef struct
+{
     uint64_t count;
     uint8_t *data;
 } String;
@@ -453,6 +471,30 @@ quaternion_from_orbit_and_pitch(float orbit, float pitch)
 
     return quaternion;
 }
+
+typedef struct
+{
+    int32_t change_count;
+    bool is_down;
+} ButtonState;
+
+typedef struct
+{
+    float dt;
+
+    I32Point mouse;
+    I32Point last_mouse;
+
+    ButtonState mouse_left;
+    ButtonState mouse_right;
+
+    ButtonState left;
+    ButtonState right;
+    ButtonState forward;
+    ButtonState back;
+    ButtonState up;
+    ButtonState down;
+} PlatformInput;
 
 #define SWAPCHAIN_IMAGE_COUNT 3
 
@@ -626,10 +668,10 @@ push_quad(DrawContext *ctx, float x0, float y0, float x1, float y1, float u0, fl
     vertices[5].color = color;
 }
 
-static float
+static int32_t
 get_string_width(Font *font, const char *str)
 {
-    float result = 0.0f;
+    int32_t result = 0;
 
     while (*str)
     {
@@ -650,7 +692,7 @@ get_string_width(Font *font, const char *str)
 
         if (glyph)
         {
-            result += (float) glyph->x_advance;
+            result += glyph->x_advance;
         }
     }
 
@@ -658,7 +700,7 @@ get_string_width(Font *font, const char *str)
 }
 
 static void
-draw_string(DrawContext *ctx, Font *font, float x, float y, const char *str, uint32_t color)
+draw_string(DrawContext *ctx, Font *font, int32_t x, int32_t y, const char *str, uint32_t color)
 {
     float u_scale = 1.0f / (float) font->texture_width;
     float v_scale = 1.0f / (float) font->texture_height;
@@ -687,8 +729,10 @@ draw_string(DrawContext *ctx, Font *font, float x, float y, const char *str, uin
             float u1 = u_scale * (float) (glyph->u + glyph->bound_width);
             float v1 = v_scale * (float) (glyph->v + glyph->bound_height);
 
-            push_quad(ctx, x + glyph->x_offset, y - glyph->y_offset - glyph->bound_height, x + glyph->x_offset + glyph->bound_width, y - glyph->y_offset, u0, v0, u1, v1, color);
-            x += (float) glyph->x_advance;
+            push_quad(ctx, (float) (x + glyph->x_offset), (float) (y - glyph->y_offset - glyph->bound_height),
+                      (float) (x + glyph->x_offset + glyph->bound_width), (float) (y - glyph->y_offset),
+                      u0, v0, u1, v1, color);
+            x += glyph->x_advance;
         }
     }
 }
@@ -768,6 +812,7 @@ typedef struct
 
     Texture font_texture;
 
+    PlatformInput input;
     Platform platform;
 
     union
@@ -785,9 +830,14 @@ typedef struct
 #endif
     };
 
+    bool show_fps;
+
     float fps;
+    float frame_time;
     uint32_t frame_count;
     uint64_t fps_start_us;
+
+    I32Rect fps_rect;
 
     float head_orbit;
     float head_pitch;
@@ -827,6 +877,12 @@ static RuntimeState state;
 #if PLATFORM_WIN32
 #  include "platform_win32.c"
 #endif
+
+static inline bool
+button_went_down(ButtonState button)
+{
+    return (button.is_down && (button.change_count > 0)) || (button.change_count > 1);
+}
 
 static inline uint64_t
 get_current_us(void)
@@ -1959,8 +2015,17 @@ xrCreateSession_impl(XrInstance instance, const XrSessionCreateInfo *create_info
         state.session.spaces[i].generation = 1;
     }
 
+    state.session.show_fps = true;
+    state.session.fps = 0.0f;
+    state.session.frame_time = 0.0f;
     state.session.frame_count = 0;
     state.session.fps_start_us = get_current_us();
+    state.session.fps_rect.min.x = 0;
+    state.session.fps_rect.min.y = 0;
+    state.session.fps_rect.max.x = 0;
+    state.session.fps_rect.max.y = 0;
+
+    memset(&state.session.input, 0, sizeof(PlatformInput));
 
     state.session.head_orbit = 0.0f;
     state.session.head_pitch = 0.0f;
@@ -2963,20 +3028,29 @@ xrWaitFrame_impl(XrSession session, const XrFrameWaitInfo *frame_wait_info, XrFr
         TRACE_LEAVE_RESULT(XR_ERROR_HANDLE_INVALID);
     }
 
+    state.session.input.mouse_left.change_count = 0;
+    state.session.input.mouse_right.change_count = 0;
+    state.session.input.left.change_count = 0;
+    state.session.input.right.change_count = 0;
+    state.session.input.forward.change_count = 0;
+    state.session.input.back.change_count = 0;
+    state.session.input.up.change_count = 0;
+    state.session.input.down.change_count = 0;
+
     switch (state.session.platform)
     {
 
 #if PLATFORM_XLIB
         case PlatformXlib:
         {
-            platform_xlib_wait_frame(&state.session.xlib, &state.session);
+            platform_xlib_wait_frame(&state.session.xlib, &state.session.input);
         } break;
 #endif
 
 #if PLATFORM_WIN32
         case PlatformWin32:
         {
-            platform_win32_wait_frame(&state.session.win32, &state.session);
+            platform_win32_wait_frame(&state.session.win32, &state.session.input);
         } break;
 #endif
 
@@ -2987,6 +3061,55 @@ xrWaitFrame_impl(XrSession session, const XrFrameWaitInfo *frame_wait_info, XrFr
 #endif
 
     }
+
+    int32_t mouse_dx = state.session.input.mouse.x - state.session.input.last_mouse.x;
+    int32_t mouse_dy = state.session.input.mouse.y - state.session.input.last_mouse.y;
+
+    state.session.input.last_mouse = state.session.input.mouse;
+
+    XrQuaternionf orientation = quaternion_from_orbit_and_pitch(state.session.head_orbit, state.session.head_pitch);
+
+    if (state.session.input.mouse_left.is_down)
+    {
+        state.session.head_orbit -= 0.0032f * mouse_dx;
+        state.session.head_pitch -= 0.0032f * mouse_dy;
+    }
+
+    XrVector3f direction = { 0.0f, 0.0f, 0.0f };
+    XrVector3f forward = quaternion_apply(orientation, (XrVector3f) { 0.0f, 0.0f, -1.0f });
+    XrVector3f right   = quaternion_apply(orientation, (XrVector3f) { 1.0f, 0.0f, 0.0f });
+
+    if (state.session.input.left.is_down)
+    {
+        direction = vec3_add(direction, vec3_scale(-1.0f, right));
+    }
+
+    if (state.session.input.right.is_down)
+    {
+        direction = vec3_add(direction, right);
+    }
+
+    if (state.session.input.forward.is_down)
+    {
+        direction = vec3_add(direction, forward);
+    }
+
+    if (state.session.input.back.is_down)
+    {
+        direction = vec3_add(direction, vec3_scale(-1.0f, forward));
+    }
+
+    if (state.session.input.up.is_down)
+    {
+        direction = vec3_add(direction, (XrVector3f) { 0.0f, 1.0f, 0.0f });
+    }
+
+    if (state.session.input.down.is_down)
+    {
+        direction = vec3_add(direction, (XrVector3f) { 0.0f, -1.0f, 0.0f });
+    }
+
+    state.session.head_position = vec3_add(state.session.head_position, vec3_scale(state.session.input.dt, direction));
 
     frame_state->shouldRender = XR_TRUE;
     frame_state->predictedDisplayPeriod = 1000000000 / TARGET_FRAME_RATE;
@@ -3135,15 +3258,16 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
             } break;
         }
 
-        float px4 = 4.0f;
-        float px6 = 6.0f;
-        float px8 = 8.0f;
+        int32_t px2 = 2;
+        int32_t px4 = 4;
+        int32_t px6 = 6;
+        int32_t px8 = 8;
 
-        float width = (float) state.session.width;
-        float height = (float) state.session.height;
+        int32_t width = state.session.width;
+        int32_t height = state.session.height;
 
-        float eye_x = px8;
-        float eye_y = px6 + px4 + (float) terminus_16_bold_font.size;
+        int32_t eye_x = px8;
+        int32_t eye_y = px6 + px4 + terminus_16_bold_font.size;
 
         DrawCommand commands[8];
 
@@ -3154,22 +3278,48 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
         ctx.command_count = 0;
         ctx.max_command_count = ArrayCount(commands);
         ctx.commands = commands;
-        ctx.x_scale = 2.0f / width;
-        ctx.y_scale = -2.0f / height;
+        ctx.x_scale = 2.0f / (float) width;
+        ctx.y_scale = -2.0f / (float) height;
 
         set_texture(&ctx, left_texture);
-        push_quad(&ctx, eye_x, eye_y, eye_x + (float) EYE_WIDTH_PX, eye_y + (float) EYE_HEIGHT_PX, 0.0f, y0, 1.0f, y1, 0xFFFFFFFF);
+        push_quad(&ctx, (float) eye_x, (float) eye_y, (float) (eye_x + EYE_WIDTH_PX), (float) (eye_y + EYE_HEIGHT_PX), 0.0f, y0, 1.0f, y1, 0xFFFFFFFF);
         set_texture(&ctx, right_texture);
-        push_quad(&ctx, eye_x + (float) EYE_WIDTH_PX, eye_y, eye_x + (float) (2 * EYE_WIDTH_PX), eye_y + (float) EYE_HEIGHT_PX, 0.0f, y0, 1.0f, y1, 0xFFFFFFFF);
+        push_quad(&ctx, (float) (eye_x + EYE_WIDTH_PX), (float) eye_y, (float) (eye_x + (2 * EYE_WIDTH_PX)), (float) (eye_y + EYE_HEIGHT_PX), 0.0f, y0, 1.0f, y1, 0xFFFFFFFF);
 
         set_texture(&ctx, state.session.font_texture);
         draw_string(&ctx, &terminus_16_bold_font, px8 + px4, px6 + terminus_16_bold_font.ascent, graphics_api_name, graphics_api_color);
 
-        char buffer[32];
-        snprintf(buffer, sizeof(buffer), "%.2f fps", state.session.fps);
+        if (rect_contains_point(state.session.fps_rect, state.session.input.mouse) &&
+            button_went_down(state.session.input.mouse_left))
+        {
+            state.session.show_fps = !state.session.show_fps;
+        }
 
-        float w = get_string_width(&terminus_16_bold_font, buffer);
-        draw_string(&ctx, &terminus_16_bold_font, width - (px8 + px4 + w), px6 + terminus_16_bold_font.ascent, buffer, graphics_api_color);
+        char buffer[32];
+
+        if (state.session.show_fps)
+        {
+            snprintf(buffer, sizeof(buffer), "%.2f fps", state.session.fps);
+        }
+        else
+        {
+            snprintf(buffer, sizeof(buffer), "%.2f ms", state.session.frame_time);
+        }
+
+        int32_t w = get_string_width(&terminus_16_bold_font, buffer);
+
+        state.session.fps_rect.min.x = width - (px8 + (2 * px4) + w);
+        state.session.fps_rect.min.y = px6 - px2;
+        state.session.fps_rect.max.x = width - px8;
+        state.session.fps_rect.max.y = px6 + terminus_16_bold_font.size;
+
+        if (rect_contains_point(state.session.fps_rect, state.session.input.mouse))
+        {
+            push_quad(&ctx, (float) state.session.fps_rect.min.x, (float) state.session.fps_rect.min.y, (float) state.session.fps_rect.max.x, (float) state.session.fps_rect.max.y,
+                      0.0f, 0.0f, 0.0f, 0.0f, 0xFF353535);
+        }
+
+        draw_string(&ctx, &terminus_16_bold_font, state.session.fps_rect.min.x + px4, state.session.fps_rect.min.y + px2 + terminus_16_bold_font.ascent, buffer, graphics_api_color);
 
         switch (state.instance.graphics_api)
         {
@@ -3235,6 +3385,7 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
     if (delta > 500000)
     {
         state.session.fps = (float) (1000000 * state.session.frame_count) / (float) delta;
+        state.session.frame_time = (float) delta / (float) (1000 * state.session.frame_count);
         state.session.frame_count = 0;
         state.session.fps_start_us = current_us;
     }

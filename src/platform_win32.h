@@ -5,17 +5,7 @@ typedef struct
     int32_t window_width;
     int32_t window_height;
 
-    bool mouse_left_down;
-
-    bool left_down;
-    bool right_down;
-    bool forward_down;
-    bool back_down;
-    bool up_down;
-    bool down_down;
-
-    int32_t mouse_x, mouse_y;
-    int32_t last_mouse_x, last_mouse_y;
+    PlatformInput *input;
 
     LARGE_INTEGER last_time;
 
