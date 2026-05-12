@@ -669,7 +669,7 @@ push_quad(DrawContext *ctx, float x0, float y0, float x1, float y1, float u0, fl
 }
 
 static int32_t
-get_string_width(Font *font, const char *str)
+get_string_width(Font *font, int32_t scale, const char *str)
 {
     int32_t result = 0;
 
@@ -696,11 +696,11 @@ get_string_width(Font *font, const char *str)
         }
     }
 
-    return result;
+    return scale * result;
 }
 
 static void
-draw_string(DrawContext *ctx, Font *font, int32_t x, int32_t y, const char *str, uint32_t color)
+draw_string(DrawContext *ctx, Font *font, int32_t scale, int32_t x, int32_t y, const char *str, uint32_t color)
 {
     float u_scale = 1.0f / (float) font->texture_width;
     float v_scale = 1.0f / (float) font->texture_height;
@@ -729,10 +729,13 @@ draw_string(DrawContext *ctx, Font *font, int32_t x, int32_t y, const char *str,
             float u1 = u_scale * (float) (glyph->u + glyph->bound_width);
             float v1 = v_scale * (float) (glyph->v + glyph->bound_height);
 
-            push_quad(ctx, (float) (x + glyph->x_offset), (float) (y - glyph->y_offset - glyph->bound_height),
-                      (float) (x + glyph->x_offset + glyph->bound_width), (float) (y - glyph->y_offset),
-                      u0, v0, u1, v1, color);
-            x += glyph->x_advance;
+            int32_t x0 = x + (scale *  glyph->x_offset);
+            int32_t y0 = y - (scale * (glyph->y_offset + glyph->bound_height));
+            int32_t x1 = x + (scale * (glyph->x_offset + glyph->bound_width));
+            int32_t y1 = y - (scale *  glyph->y_offset);
+
+            push_quad(ctx, (float) x0, (float) y0, (float) x1, (float) y1, u0, v0, u1, v1, color);
+            x += (scale * glyph->x_advance);
         }
     }
 }
@@ -1913,12 +1916,14 @@ xrCreateSession_impl(XrInstance instance, const XrSessionCreateInfo *create_info
         TRACE_LEAVE_RESULT(XR_ERROR_GRAPHICS_DEVICE_INVALID);
     }
 
-    int32_t px4 = 4;
-    int32_t px6 = 6;
-    int32_t px8 = 8;
+    int32_t ui_scale = 1;
+
+    int32_t px4 = ui_scale * 4;
+    int32_t px6 = ui_scale * 6;
+    int32_t px8 = ui_scale * 8;
 
     int32_t window_width  = (2 * EYE_WIDTH_PX) + (2 * px8);
-    int32_t window_height = EYE_HEIGHT_PX + px8 + px6 + px4 + terminus_16_bold_font.size;
+    int32_t window_height = EYE_HEIGHT_PX + px8 + px6 + px4 + (ui_scale * terminus_16_bold_font.size);
 
     switch (state.instance.graphics_api)
     {
@@ -3258,16 +3263,18 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
             } break;
         }
 
-        int32_t px2 = 2;
-        int32_t px4 = 4;
-        int32_t px6 = 6;
-        int32_t px8 = 8;
+        int32_t ui_scale = 1;
+
+        int32_t px2 = ui_scale * 2;
+        int32_t px4 = ui_scale * 4;
+        int32_t px6 = ui_scale * 6;
+        int32_t px8 = ui_scale * 8;
 
         int32_t width = state.session.width;
         int32_t height = state.session.height;
 
         int32_t eye_x = px8;
-        int32_t eye_y = px6 + px4 + terminus_16_bold_font.size;
+        int32_t eye_y = px6 + px4 + (ui_scale * terminus_16_bold_font.size);
 
         DrawCommand commands[8];
 
@@ -3287,7 +3294,7 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
         push_quad(&ctx, (float) (eye_x + EYE_WIDTH_PX), (float) eye_y, (float) (eye_x + (2 * EYE_WIDTH_PX)), (float) (eye_y + EYE_HEIGHT_PX), 0.0f, y0, 1.0f, y1, 0xFFFFFFFF);
 
         set_texture(&ctx, state.session.font_texture);
-        draw_string(&ctx, &terminus_16_bold_font, px8 + px4, px6 + terminus_16_bold_font.ascent, graphics_api_name, graphics_api_color);
+        draw_string(&ctx, &terminus_16_bold_font, ui_scale, px8 + px4, px6 + (ui_scale * terminus_16_bold_font.ascent), graphics_api_name, graphics_api_color);
 
         if (rect_contains_point(state.session.fps_rect, state.session.input.mouse) &&
             button_went_down(state.session.input.mouse_left))
@@ -3306,12 +3313,12 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
             snprintf(buffer, sizeof(buffer), "%.2f ms", state.session.frame_time);
         }
 
-        int32_t w = get_string_width(&terminus_16_bold_font, buffer);
+        int32_t w = get_string_width(&terminus_16_bold_font, ui_scale, buffer);
 
         state.session.fps_rect.min.x = width - (px8 + (2 * px4) + w);
         state.session.fps_rect.min.y = px6 - px2;
         state.session.fps_rect.max.x = width - px8;
-        state.session.fps_rect.max.y = px6 + terminus_16_bold_font.size;
+        state.session.fps_rect.max.y = px6 + (ui_scale * terminus_16_bold_font.size);
 
         if (rect_contains_point(state.session.fps_rect, state.session.input.mouse))
         {
@@ -3319,7 +3326,7 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
                       0.0f, 0.0f, 0.0f, 0.0f, 0xFF353535);
         }
 
-        draw_string(&ctx, &terminus_16_bold_font, state.session.fps_rect.min.x + px4, state.session.fps_rect.min.y + px2 + terminus_16_bold_font.ascent, buffer, graphics_api_color);
+        draw_string(&ctx, &terminus_16_bold_font, ui_scale, state.session.fps_rect.min.x + px4, state.session.fps_rect.min.y + px2 + (ui_scale * terminus_16_bold_font.ascent), buffer, graphics_api_color);
 
         switch (state.instance.graphics_api)
         {
