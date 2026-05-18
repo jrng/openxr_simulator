@@ -1,3 +1,166 @@
+static int32_t
+parse_desktop_settings(String settings)
+{
+    if (!settings.count)
+    {
+        return 1;
+    }
+
+    bool is_little_endian = !settings.data[0];
+
+    if (settings.count < 12)
+    {
+        return 1;
+    }
+
+    string_advance(&settings, 12);
+
+    int32_t gdk_window_scaling_factor;
+    int32_t xft_dpi_scaling;
+
+    bool has_xft_dpi_scaling = false;
+    bool has_gdk_window_scaling_factor = false;
+
+    while (settings.count >= 4)
+    {
+        uint8_t type = settings.data[0];
+
+        String name;
+
+        if (is_little_endian)
+        {
+            name.count = ((uint16_t) settings.data[3] << 8) | (uint16_t) settings.data[2];
+        }
+        else
+        {
+            name.count = ((uint16_t) settings.data[2] << 8) | (uint16_t) settings.data[3];
+        }
+
+        name.data = settings.data + 4;
+
+        if (settings.count < name.count)
+        {
+            break;
+        }
+
+        string_advance(&settings, 8 + Align(name.count, 4));
+
+        switch (type)
+        {
+            case 0: /* XSettingsTypeInteger */
+            {
+                int32_t value;
+
+                if (is_little_endian)
+                {
+                    value = ((int32_t) settings.data[3] << 24) | ((int32_t) settings.data[2] << 16) | ((int32_t) settings.data[1] << 8) | (int32_t) settings.data[0];
+                }
+                else
+                {
+                    value = ((int32_t) settings.data[0] << 24) | ((int32_t) settings.data[1] << 16) | ((int32_t) settings.data[2] << 8) | (int32_t) settings.data[3];
+                }
+
+                string_advance(&settings, 4);
+
+                if (strings_are_equal(name, S("Gdk/WindowScalingFactor")))
+                {
+                    has_gdk_window_scaling_factor = true;
+                    gdk_window_scaling_factor = value;
+                }
+                else if (strings_are_equal(name, S("Xft/DPI")))
+                {
+                    has_xft_dpi_scaling = true;
+                    xft_dpi_scaling = ((value / 1024) + 48) / 96;
+                }
+            } break;
+
+            case 1: /* XSettingsTypeString */
+            {
+                String str;
+
+                if (is_little_endian)
+                {
+                    str.count = ((uint32_t) settings.data[3] << 24) | ((uint32_t) settings.data[2] << 16) | ((uint32_t) settings.data[1] << 8) | (uint32_t) settings.data[0];
+                }
+                else
+                {
+                    str.count = ((uint32_t) settings.data[0] << 24) | ((uint32_t) settings.data[1] << 16) | ((uint32_t) settings.data[2] << 8) | (uint32_t) settings.data[3];
+                }
+
+                str.data = settings.data + 4;
+
+                string_advance(&settings, 4 + Align(str.count, 4));
+            } break;
+
+            case 2: /* XSettingsTypeColor */
+            {
+                string_advance(&settings, 8);
+            } break;
+        }
+    }
+
+    int32_t ui_scale = 1;
+
+    if (has_gdk_window_scaling_factor)
+    {
+        ui_scale = gdk_window_scaling_factor;
+    }
+    else if (has_xft_dpi_scaling)
+    {
+        ui_scale = xft_dpi_scaling;
+    }
+
+    return ui_scale;
+}
+
+static int32_t
+platform_xlib_get_ui_scale(Display *display)
+{
+    int32_t ui_scale = 1;
+
+    int screen = DefaultScreen(display);
+
+    char xsettings_screen_str[32];
+    snprintf(xsettings_screen_str, sizeof(xsettings_screen_str), "_XSETTINGS_S%d", screen);
+
+    Atom xsettings_screen = XInternAtom(display, xsettings_screen_str, False);
+    Atom xsettings_settings = XInternAtom(display, "_XSETTINGS_SETTINGS", False);
+
+    XGrabServer(display);
+
+    Window settings_window = XGetSelectionOwner(display, xsettings_screen);
+
+    if (settings_window != None)
+    {
+        XSelectInput(display, settings_window, StructureNotifyMask | PropertyChangeMask);
+
+        Atom type;
+        int format;
+        unsigned long length, remaining;
+        unsigned char *settings_buffer = NULL;
+
+        int ret = XGetWindowProperty(display, settings_window, xsettings_settings,
+                                     0, 2048, False, AnyPropertyType, &type, &format, &length, &remaining, &settings_buffer);
+
+        if (ret == Success)
+        {
+            if ((length > 0) && (remaining == 0) && (format == 8))
+            {
+                String settings_str;
+                settings_str.count = length;
+                settings_str.data = settings_buffer;
+                ui_scale = parse_desktop_settings(settings_str);
+            }
+
+            XFree(settings_buffer);
+        }
+    }
+
+    XUngrabServer(display);
+
+    return ui_scale;
+}
+
 #if GRAPHICS_API_OPENGL
 
 typedef GLXContext glXCreateContextAttribsARB(Display *dpy, GLXFBConfig config, GLXContext share_context, Bool direct, const int *attrib_list);
@@ -77,12 +240,8 @@ initialize_platform_xlib_opengl(PlatformXlibState *platform_xlib, Display *displ
         return;
     }
 
-    XStoreName(platform_xlib->display, platform_xlib->window, "OpenXR Viewer");
-
-    platform_xlib->wm_protocols = XInternAtom(platform_xlib->display, "WM_PROTOCOLS", 0);
-    platform_xlib->wm_delete_window = XInternAtom(platform_xlib->display, "WM_DELETE_WINDOW", 0);
-
-    XSetWMProtocols(platform_xlib->display, platform_xlib->window, &platform_xlib->wm_delete_window, 1);
+    platform_xlib->wm_protocols = XInternAtom(platform_xlib->display, "WM_PROTOCOLS", False);
+    platform_xlib->wm_delete_window = XInternAtom(platform_xlib->display, "WM_DELETE_WINDOW", False);
 
     XSizeHints sh = {};
     sh.flags = PMinSize | PMaxSize | PWinGravity;
@@ -91,6 +250,9 @@ initialize_platform_xlib_opengl(PlatformXlibState *platform_xlib, Display *displ
     sh.min_height = sh.max_height = window_height;
 
     XSetWMNormalHints(platform_xlib->display, platform_xlib->window, &sh);
+    XSetWMProtocols(platform_xlib->display, platform_xlib->window, &platform_xlib->wm_delete_window, 1);
+
+    XStoreName(platform_xlib->display, platform_xlib->window, "OpenXR Viewer");
 
     bool has_ARB_create_context = false;
     bool has_ARB_create_context_profile = false;
