@@ -588,7 +588,7 @@ typedef struct
     Texture texture;
 } DrawCommand;
 
-#define MAX_VERTEX_COUNT (6 * 128)
+#define MAX_VERTEX_COUNT (6 * 512)
 
 typedef struct
 {
@@ -712,11 +712,13 @@ get_string_width(Font *font, int32_t scale, const char *str)
     return scale * result;
 }
 
-static void
+static int32_t
 draw_string(DrawContext *ctx, Font *font, int32_t scale, int32_t x, int32_t y, const char *str, uint32_t color)
 {
     float u_scale = 1.0f / (float) font->texture_width;
     float v_scale = 1.0f / (float) font->texture_height;
+
+    int32_t x_start = x;
 
     while (*str)
     {
@@ -751,6 +753,8 @@ draw_string(DrawContext *ctx, Font *font, int32_t scale, int32_t x, int32_t y, c
             x += (scale * glyph->x_advance);
         }
     }
+
+    return x - x_start;
 }
 
 typedef struct
@@ -773,6 +777,11 @@ typedef struct
     uint16_t generation;
 
     uint32_t next_image_index;
+
+    uint32_t width;
+    uint32_t height;
+
+    int64_t format;
 
     union
     {
@@ -1937,7 +1946,7 @@ xrCreateSession_impl(XrInstance instance, const XrSessionCreateInfo *create_info
     int32_t px8 = state.session.ui_scale * 8;
 
     int32_t window_width  = (2 * EYE_WIDTH_PX) + (2 * px8);
-    int32_t window_height = EYE_HEIGHT_PX + px8 + px6 + px4 + (state.session.ui_scale * terminus_16_bold_font.size);
+    int32_t window_height = EYE_HEIGHT_PX + 2 * (px6 + px4) + 4 * (state.session.ui_scale * terminus_16_bold_font.size);
 
     switch (state.instance.graphics_api)
     {
@@ -1980,7 +1989,7 @@ xrCreateSession_impl(XrInstance instance, const XrSessionCreateInfo *create_info
                 px8 = state.session.ui_scale * 8;
 
                 window_width  = (2 * EYE_WIDTH_PX) + (2 * px8);
-                window_height = EYE_HEIGHT_PX + px8 + px6 + px4 + (state.session.ui_scale * terminus_16_bold_font.size);
+                window_height = EYE_HEIGHT_PX + 2 * (px6 + px4) + 4 * (state.session.ui_scale * terminus_16_bold_font.size);
 
                 state.session.active = true;
                 state.session.platform = PlatformXlib;
@@ -2767,6 +2776,9 @@ xrCreateSwapchain_impl(XrSession session, const XrSwapchainCreateInfo *create_in
 
     swch->active = true;
     swch->next_image_index = 0;
+    swch->width = create_info->width;
+    swch->height = create_info->height;
+    swch->format = create_info->format;
 
     *swapchain = (XrSwapchain) (uintptr_t) (((uintptr_t) swapchain_id << 16) | (uintptr_t) swch->generation);
 
@@ -3213,8 +3225,8 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
         uint32_t graphics_api_color = 0xFFFFFFFF;
         const char *graphics_api_name = "UNKNOWN GRAPHICS API";
 
-        float y0 = 1.0f;
-        float y1 = 0.0f;
+        float v0 = 1.0f;
+        float v1 = 0.0f;
 
         switch (state.instance.graphics_api)
         {
@@ -3240,8 +3252,8 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
 
                 graphics_api_name = "Direct3D 11";
 
-                y0 = 0.0f;
-                y1 = 1.0f;
+                v0 = 0.0f;
+                v1 = 1.0f;
             } break;
 #endif
 
@@ -3310,9 +3322,9 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
         ctx.y_scale = -2.0f / (float) height;
 
         set_texture(&ctx, left_texture);
-        push_quad(&ctx, (float) eye_x, (float) eye_y, (float) (eye_x + EYE_WIDTH_PX), (float) (eye_y + EYE_HEIGHT_PX), 0.0f, y0, 1.0f, y1, 0xFFFFFFFF);
+        push_quad(&ctx, (float) eye_x, (float) eye_y, (float) (eye_x + EYE_WIDTH_PX), (float) (eye_y + EYE_HEIGHT_PX), 0.0f, v0, 1.0f, v1, 0xFFFFFFFF);
         set_texture(&ctx, right_texture);
-        push_quad(&ctx, (float) (eye_x + EYE_WIDTH_PX), (float) eye_y, (float) (eye_x + (2 * EYE_WIDTH_PX)), (float) (eye_y + EYE_HEIGHT_PX), 0.0f, y0, 1.0f, y1, 0xFFFFFFFF);
+        push_quad(&ctx, (float) (eye_x + EYE_WIDTH_PX), (float) eye_y, (float) (eye_x + (2 * EYE_WIDTH_PX)), (float) (eye_y + EYE_HEIGHT_PX), 0.0f, v0, 1.0f, v1, 0xFFFFFFFF);
 
         set_texture(&ctx, state.session.font_texture);
         draw_string(&ctx, &terminus_16_bold_font, state.session.ui_scale, px8 + px4, px6 + (state.session.ui_scale * terminus_16_bold_font.ascent), graphics_api_name, graphics_api_color);
@@ -3348,6 +3360,74 @@ xrEndFrame_impl(XrSession session, const XrFrameEndInfo *frame_end_info)
         }
 
         draw_string(&ctx, &terminus_16_bold_font, state.session.ui_scale, state.session.fps_rect.min.x + px4, state.session.fps_rect.min.y + px2 + (state.session.ui_scale * terminus_16_bold_font.ascent), buffer, graphics_api_color);
+
+        int32_t y0 = eye_y + EYE_HEIGHT_PX + px4;
+        int32_t x0 = px8 + px4;
+
+        for (size_t i = 0; i < ArrayCount(state.session.swapchains); i += 1)
+        {
+            Swapchain *swch = state.session.swapchains + i;
+
+            if (swch->active)
+            {
+                int32_t x = x0;
+                int32_t y = y0;
+
+                draw_string(&ctx, &terminus_16_bold_font, state.session.ui_scale, x,
+                            y + (state.session.ui_scale * terminus_16_bold_font.ascent),
+                            "Swapchain", 0xFFFFFFFF);
+
+                x = x0;
+                y += state.session.ui_scale * terminus_16_bold_font.size;
+
+                x += draw_string(&ctx, &terminus_16_bold_font, state.session.ui_scale, x,
+                                 y + (state.session.ui_scale * terminus_16_bold_font.ascent),
+                                 "format ", 0xFF555555);
+
+                const char *format_str;
+
+                switch (state.instance.graphics_api)
+                {
+#if GRAPHICS_API_D3D11
+                    case GraphicsApiD3D11:  format_str = d3d11_format_to_string(swch->format);  break;
+#endif
+#if GRAPHICS_API_OPENGL
+                    case GraphicsApiOpenGl: format_str = opengl_format_to_string(swch->format); break;
+#endif
+                    default: break;
+                }
+
+                x += draw_string(&ctx, &terminus_16_bold_font, state.session.ui_scale, x,
+                                 y + (state.session.ui_scale * terminus_16_bold_font.ascent),
+                                 format_str, 0xFFFFFFFF);
+
+                x = x0;
+                y += state.session.ui_scale * terminus_16_bold_font.size;
+
+                x += draw_string(&ctx, &terminus_16_bold_font, state.session.ui_scale, x,
+                                 y + (state.session.ui_scale * terminus_16_bold_font.ascent),
+                                 "width  ", 0xFF555555);
+
+                snprintf(buffer, sizeof(buffer), "%u", swch->width);
+                x += draw_string(&ctx, &terminus_16_bold_font, state.session.ui_scale, x,
+                                 y + (state.session.ui_scale * terminus_16_bold_font.ascent),
+                                 buffer, 0xFFFFFFFF);
+
+                x += draw_string(&ctx, &terminus_16_bold_font, state.session.ui_scale, x,
+                                 y + (state.session.ui_scale * terminus_16_bold_font.ascent),
+                                 "    height ", 0xFF555555);
+
+                snprintf(buffer, sizeof(buffer), "%u", swch->height);
+                x += draw_string(&ctx, &terminus_16_bold_font, state.session.ui_scale, x,
+                                 y + (state.session.ui_scale * terminus_16_bold_font.ascent),
+                                 buffer, 0xFFFFFFFF);
+
+                x = x0;
+                y += state.session.ui_scale * terminus_16_bold_font.size;
+
+                x0 += state.session.ui_scale * 320;
+            }
+        }
 
         switch (state.instance.graphics_api)
         {

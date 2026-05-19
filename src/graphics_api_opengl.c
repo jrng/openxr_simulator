@@ -1,3 +1,28 @@
+#if defined(_WIN32)
+#  include "opengl_windows.h"
+#endif
+
+static inline const char *
+opengl_format_to_string(int64_t format)
+{
+    const char *result = "UNKNOWN_OPENGL_FORMAT";
+
+#define NAME(fmt) case fmt: result = #fmt; break
+
+    switch (format)
+    {
+        NAME(GL_SRGB8_ALPHA8);
+        NAME(GL_RGBA8);
+        NAME(GL_DEPTH_COMPONENT32F);
+        NAME(GL_DEPTH_COMPONENT32);
+        NAME(GL_DEPTH_COMPONENT24);
+    }
+
+#undef NAME
+
+    return result;
+}
+
 static XRAPI_ATTR XrResult XRAPI_CALL
 xrGetOpenGLGraphicsRequirementsKHR_impl(XrInstance instance, XrSystemId system_id, XrGraphicsRequirementsOpenGLKHR *graphics_requirements)
 {
@@ -25,10 +50,6 @@ xrGetOpenGLGraphicsRequirementsKHR_impl(XrInstance instance, XrSystemId system_i
 
     TRACE_LEAVE_RESULT(XR_SUCCESS);
 }
-
-#if defined(_WIN32)
-#  include "opengl_windows.h"
-#endif
 
 #define OPENGL_FUNCTION(type, name) static type name
 

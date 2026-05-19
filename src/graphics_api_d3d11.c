@@ -1,3 +1,28 @@
+static inline const char *
+d3d11_format_to_string(int64_t format)
+{
+    const char *result = "UNKNOWN_D3D11_FORMAT";
+
+#define NAME(fmt) case fmt: result = #fmt; break
+
+    switch (format)
+    {
+        NAME(DXGI_FORMAT_R8G8B8A8_UNORM_SRGB);
+        NAME(DXGI_FORMAT_R8G8B8A8_UNORM);
+        NAME(DXGI_FORMAT_R8G8B8A8_TYPELESS);
+        NAME(DXGI_FORMAT_B8G8R8A8_UNORM_SRGB);
+        NAME(DXGI_FORMAT_B8G8R8A8_UNORM);
+        NAME(DXGI_FORMAT_B8G8R8A8_TYPELESS);
+        NAME(DXGI_FORMAT_D32_FLOAT);
+        NAME(DXGI_FORMAT_D24_UNORM_S8_UINT);
+        NAME(DXGI_FORMAT_D16_UNORM);
+    }
+
+#undef NAME
+
+    return result;
+}
+
 static inline bool
 d3d11_is_depth_format(int64_t format)
 {
