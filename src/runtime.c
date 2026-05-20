@@ -493,6 +493,7 @@ typedef struct
 
 typedef struct
 {
+    bool should_close;
     float dt;
 
     I32Point mouse;
@@ -1194,23 +1195,16 @@ xrPollEvent_impl(XrInstance instance, XrEventDataBuffer *event)
 
         if (state.instance.event_read >= ArrayCount(state.instance.event_queue))
         {
-            state.instance.event_read -= ArrayCount(state.instance.event_queue);
+            state.instance.event_read  -= ArrayCount(state.instance.event_queue);
             state.instance.event_write -= ArrayCount(state.instance.event_queue);
         }
 
         *event = state.instance.event_queue[index];
 
-        msg("event !!!\n");
         TRACE_LEAVE_RESULT(XR_SUCCESS);
     }
     else
     {
-        static int count = 0;
-        if (count < 10)
-        {
-            msg("event unavailable\n");
-            count += 1;
-        }
         TRACE_LEAVE_RESULT(XR_EVENT_UNAVAILABLE);
     }
 }
@@ -2127,8 +2121,7 @@ xrDestroySession_impl(XrSession session)
                 case PlatformWin32:
                 {
                     destroy_opengl_texture(&state.session.win32.opengl, state.session.font_texture);
-                    msg("TODO: deinitialize_platform_win32_opengl\n");
-                    // deinitialize_platform_win32_opengl(&state.session.win32);
+                    deinitialize_platform_win32_opengl(&state.session.win32);
                 } break;
 #  endif
 
@@ -3033,8 +3026,6 @@ xrBeginSession_impl(XrSession session, const XrSessionBeginInfo *begin_info)
     // TODO: actually tie that to the window focus state
     change_state(XR_SESSION_STATE_FOCUSED);
 
-    msg("TODO: implement %s\n", __func__);
-
     TRACE_LEAVE_RESULT(XR_SUCCESS);
 }
 
@@ -3042,9 +3033,6 @@ static XRAPI_ATTR XrResult XRAPI_CALL
 xrEndSession_impl(XrSession session)
 {
     TRACE_ENTER();
-
-    msg("TODO: implement %s\n", __func__);
-    // TODO: implement
     TRACE_LEAVE_RESULT(XR_SUCCESS);
 }
 
@@ -3053,8 +3041,20 @@ xrRequestExitSession_impl(XrSession session)
 {
     TRACE_ENTER();
 
-    msg("TODO: implement %s\n", __func__);
-    // TODO: implement
+    if ((session != SESSION_HANDLE) || !state.session.active)
+    {
+        TRACE_LEAVE_RESULT(XR_ERROR_HANDLE_INVALID);
+    }
+
+    if (state.session.state == XR_SESSION_STATE_FOCUSED)
+    {
+        change_state(XR_SESSION_STATE_VISIBLE);
+        change_state(XR_SESSION_STATE_SYNCHRONIZED);
+    }
+
+    change_state(XR_SESSION_STATE_STOPPING);
+    change_state(XR_SESSION_STATE_EXITING);
+
     TRACE_LEAVE_RESULT(XR_SUCCESS);
 }
 
@@ -3100,6 +3100,19 @@ xrWaitFrame_impl(XrSession session, const XrFrameWaitInfo *frame_wait_info, XrFr
         } break;
 #endif
 
+    }
+
+    if (state.session.input.should_close)
+    {
+        if (state.session.state == XR_SESSION_STATE_FOCUSED)
+        {
+            change_state(XR_SESSION_STATE_VISIBLE);
+            change_state(XR_SESSION_STATE_SYNCHRONIZED);
+            change_state(XR_SESSION_STATE_STOPPING);
+            change_state(XR_SESSION_STATE_EXITING);
+        }
+
+        state.session.input.should_close = false;
     }
 
     int32_t mouse_dx = state.session.input.mouse.x - state.session.input.last_mouse.x;

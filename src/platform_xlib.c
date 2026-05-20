@@ -387,7 +387,11 @@ initialize_platform_xlib_opengl(PlatformXlibState *platform_xlib, Display *displ
 static void
 deinitialize_platform_xlib_opengl(PlatformXlibState *platform_xlib)
 {
+    glXMakeCurrent(platform_xlib->display, platform_xlib->window, platform_xlib->context);
+
     deinitialize_opengl(&platform_xlib->opengl);
+
+    glXMakeCurrent(platform_xlib->display, platform_xlib->client_drawable, platform_xlib->client_context);
 
     // TODO: the rest
 }
@@ -411,7 +415,7 @@ platform_xlib_wait_frame(PlatformXlibState *platform_xlib, PlatformInput *input)
                 if (ev.xclient.message_type == platform_xlib->wm_protocols &&
                     (Atom) ev.xclient.data.l[0] == platform_xlib->wm_delete_window)
                 {
-                    // running = false;
+                    input->should_close = true;
                 }
             } break;
 

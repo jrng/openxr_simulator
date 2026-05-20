@@ -71,6 +71,11 @@ window_callback(HWND window_handle, UINT message, WPARAM w_param, LPARAM l_param
 
     switch (message)
     {
+        case WM_CLOSE:
+        {
+            input->should_close = true;
+        } break;
+
         case WM_MOUSEMOVE:
         {
             input->mouse.x = (int16_t)( l_param        & 0xFFFF);
@@ -473,6 +478,20 @@ initialize_platform_win32_opengl(PlatformWin32State *platform_win32, HDC client_
     QueryPerformanceCounter(&platform_win32->last_time);
 }
 
+static void
+deinitialize_platform_win32_opengl(PlatformWin32State *platform_win32)
+{
+    HDC device_context = GetDC(platform_win32->window);
+
+    wglMakeCurrent(device_context, platform_win32->gl_context);
+    deinitialize_opengl(&platform_win32->opengl);
+    wglDeleteContext(platform_win32->gl_context);
+    ReleaseDC(platform_win32->window, device_context);
+    destroy_window(platform_win32->window);
+
+    wglMakeCurrent(platform_win32->client_device_context, platform_win32->client_gl_context);
+}
+
 #endif
 
 #if GRAPHICS_API_D3D11
@@ -815,6 +834,7 @@ platform_win32_wait_frame(PlatformWin32State *platform_win32, PlatformInput *inp
 
     *input = platform_win32->input;
 
+    platform_win32->input.should_close = false;
     platform_win32->input.mouse_left.change_count = 0;
     platform_win32->input.mouse_right.change_count = 0;
     platform_win32->input.left.change_count = 0;
