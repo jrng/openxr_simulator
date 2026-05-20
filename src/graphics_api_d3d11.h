@@ -9,6 +9,7 @@ typedef struct
     ID3D11InputLayout *vertex_layout;
     ID3D11RasterizerState *rasterizer_state;
     ID3D11SamplerState *sampler_state;
+    ID3D11BlendState *blend_state;
 
     ID3D11VertexShader *vertex_shader;
     ID3D11PixelShader *pixel_shader;

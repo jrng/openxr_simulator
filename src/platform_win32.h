@@ -5,7 +5,7 @@ typedef struct
     int32_t window_width;
     int32_t window_height;
 
-    PlatformInput *input;
+    PlatformInput input;
 
     LARGE_INTEGER last_time;
 

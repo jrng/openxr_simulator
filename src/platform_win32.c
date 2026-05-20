@@ -47,7 +47,6 @@ xrConvertTimeToWin32PerformanceCounterKHR_impl(XrInstance instance, XrTime time,
 LRESULT CALLBACK
 window_callback(HWND window_handle, UINT message, WPARAM w_param, LPARAM l_param)
 {
-    PlatformInput *input = NULL;
     PlatformWin32State *platform_win32 = NULL;
 
     if (message == WM_NCCREATE)
@@ -61,10 +60,12 @@ window_callback(HWND window_handle, UINT message, WPARAM w_param, LPARAM l_param
         platform_win32 = (PlatformWin32State *) GetWindowLongPtr(window_handle, GWLP_USERDATA);
     }
 
-    if (platform_win32)
+    if (!platform_win32)
     {
-        input = platform_win32->input;
+        return DefWindowProc(window_handle, message, w_param, l_param);
     }
+
+    PlatformInput *input = &platform_win32->input;
 
     LRESULT result = FALSE;
 
@@ -447,7 +448,8 @@ initialize_platform_win32_opengl(PlatformWin32State *platform_win32, HDC client_
         if (!name)                                                     \
         {                                                              \
             msg("error: could not load opengl function '" #name "'\n");\
-            wglMakeCurrent(0, 0);                                      \
+            wglMakeCurrent(platform_win32->client_device_context,      \
+                           platform_win32->client_gl_context);         \
             wglDeleteContext(platform_win32->gl_context);              \
             ReleaseDC(platform_win32->window, device_context);         \
             destroy_window(platform_win32->window);                    \
@@ -745,6 +747,25 @@ initialize_platform_win32_d3d11(PlatformWin32State *platform_win32, ID3D11Device
         return;
     }
 
+    D3D11_BLEND_DESC blend_description;
+    blend_description.AlphaToCoverageEnable                 = FALSE;
+    blend_description.IndependentBlendEnable                = FALSE;
+    blend_description.RenderTarget[0].BlendEnable           = TRUE;
+    blend_description.RenderTarget[0].SrcBlend              = D3D11_BLEND_ONE;
+    blend_description.RenderTarget[0].DestBlend             = D3D11_BLEND_INV_SRC_ALPHA;
+    blend_description.RenderTarget[0].BlendOp               = D3D11_BLEND_OP_ADD;
+    blend_description.RenderTarget[0].SrcBlendAlpha         = D3D11_BLEND_ONE;
+    blend_description.RenderTarget[0].DestBlendAlpha        = D3D11_BLEND_INV_SRC_ALPHA;
+    blend_description.RenderTarget[0].BlendOpAlpha          = D3D11_BLEND_OP_ADD;
+    blend_description.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+    if (FAILED(ID3D11Device_CreateBlendState(platform_win32->d3d11.device, &blend_description, &platform_win32->d3d11.blend_state)))
+    {
+        msg("d3d11 error: could not create blend state\n");
+        // TODO:
+        return;
+    }
+
     ShowWindow(platform_win32->window, SW_SHOW);
 
     QueryPerformanceCounter(&platform_win32->last_time);
@@ -778,11 +799,11 @@ platform_win32_wait_frame(PlatformWin32State *platform_win32, PlatformInput *inp
         }
     }
 
-    input->dt = (float) (time.QuadPart - platform_win32->last_time.QuadPart) /
-                (float) win32_performance_frequency.QuadPart;
+    platform_win32->input.last_mouse = input->mouse;
+    platform_win32->input.dt = (float) (time.QuadPart - platform_win32->last_time.QuadPart) /
+                               (float) win32_performance_frequency.QuadPart;
 
     platform_win32->last_time = time;
-    platform_win32->input = input;
 
     MSG message;
 
@@ -792,7 +813,16 @@ platform_win32_wait_frame(PlatformWin32State *platform_win32, PlatformInput *inp
         DispatchMessage(&message);
     }
 
-    platform_win32->input = NULL;
+    *input = platform_win32->input;
+
+    platform_win32->input.mouse_left.change_count = 0;
+    platform_win32->input.mouse_right.change_count = 0;
+    platform_win32->input.left.change_count = 0;
+    platform_win32->input.right.change_count = 0;
+    platform_win32->input.forward.change_count = 0;
+    platform_win32->input.back.change_count = 0;
+    platform_win32->input.up.change_count = 0;
+    platform_win32->input.down.change_count = 0;
 }
 
 #if GRAPHICS_API_D3D11
@@ -812,6 +842,12 @@ static void
 platform_win32_d3d11_finish_drawing(PlatformWin32State *platform_win32, DrawContext *ctx)
 {
     ID3D11DeviceContext_Unmap(platform_win32->d3d11.device_context, (ID3D11Resource *) platform_win32->d3d11.vertex_buffer, 0);
+
+    ID3D11BlendState *saved_blend_state;
+    float saved_blend_factor[4];
+    UINT saved_sample_mask;
+
+    ID3D11DeviceContext_OMGetBlendState(platform_win32->d3d11.device_context, &saved_blend_state, saved_blend_factor, &saved_sample_mask);
 
     float color[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 
@@ -836,6 +872,7 @@ platform_win32_d3d11_finish_drawing(PlatformWin32State *platform_win32, DrawCont
 
     // TODO: restore the state after we are done
     ID3D11DeviceContext_RSSetState(platform_win32->d3d11.device_context, platform_win32->d3d11.rasterizer_state);
+    ID3D11DeviceContext_OMSetBlendState(platform_win32->d3d11.device_context, platform_win32->d3d11.blend_state, NULL, 0xFFFFFFFF);
 
     const UINT stride = sizeof(Vertex);
     const UINT offset = 0;
@@ -853,6 +890,8 @@ platform_win32_d3d11_finish_drawing(PlatformWin32State *platform_win32, DrawCont
 
     ID3D11ShaderResourceView *null_view = NULL;
     ID3D11DeviceContext_PSSetShaderResources(platform_win32->d3d11.device_context, 0, 1, &null_view);
+
+    ID3D11DeviceContext_OMSetBlendState(platform_win32->d3d11.device_context, saved_blend_state, saved_blend_factor, saved_sample_mask);
 
     IDXGISwapChain1_Present(platform_win32->d3d11.swapchain, 1, 0);
 }
