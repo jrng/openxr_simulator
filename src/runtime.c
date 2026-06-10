@@ -998,11 +998,6 @@ xrCreateInstance_impl(const XrInstanceCreateInfo *create_info, XrInstance *insta
         TRACE_LEAVE_RESULT(XR_ERROR_VALIDATION_FAILURE);
     }
 
-    if (create_info->enabledApiLayerCount > 0)
-    {
-        TRACE_LEAVE_RESULT(XR_ERROR_API_LAYER_NOT_PRESENT);
-    }
-
     if ((create_info->enabledExtensionCount > 0) &&
         !create_info->enabledExtensionNames)
     {
